@@ -3,6 +3,8 @@ let VELVEEVA_CLI_VERSION = "1.1.1w"
 let DOCKER_IMAGE_NAME = "drewsynan/velveeva"
 let DOCKER_WORK_DIR = "/home/project"
 
+type Flag = ON | OFF
+
 type TTYComp<'a> = 
     | TTYSuccess 
     | TTYFailure of 'a
@@ -38,7 +40,11 @@ extern bool GetConsoleMode(void* hConsoleHandle, int* lpMode)
 extern bool SetConsoleMode(void* hConsoleHandle, int lpMode)
 
 #nowarn "9" // pointers are evil
-let setConsoleMode handleConst modeConst =
+let setConsoleMode handleConst modeConst flag =
+    let inline op = match flag with
+             | ON -> (|||)
+             | OFF -> (^^^)
+
     let INVALID_HANDLE_VALUE = nativeint -1
     let handle = GetStdHandle(handleConst)
     if handle <> INVALID_HANDLE_VALUE then
@@ -46,7 +52,7 @@ let setConsoleMode handleConst modeConst =
 
         if GetConsoleMode(handle, mode) then
             let value = NativePtr.read mode
-            let value = value ||| modeConst
+            let value = value |> op |< modeConst
             match SetConsoleMode(handle, value) with
             | true -> TTYSuccess
             | false -> TTYFailure "Could not set console mode"
@@ -55,7 +61,7 @@ let setConsoleMode handleConst modeConst =
      else
         TTYFailure "Could not get console handle"
 
-let enableVTMode () =
+let setVTMode flag =
     // Console Handles
     // https://msdn.microsoft.com/en-us/library/windows/desktop/ms683231(v=vs.85).aspx
 
@@ -68,11 +74,13 @@ let enableVTMode () =
     let STD_INPUT_HANDLE = -10
     let ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
     
-    let outputEnabled = setConsoleMode STD_OUTPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_PROCESSING
-    let inputEnabled = setConsoleMode STD_INPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_INPUT
+    let outputEnabled = setConsoleMode STD_OUTPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_PROCESSING flag
+    let inputEnabled = setConsoleMode STD_INPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_INPUT flag
     outputEnabled <+> inputEnabled
 
-// TODO: write disableVTMode ()
+let enableVTMode () = setVTMode ON
+let disableVTMode () = setVTMode OFF
+
 
 let execString s =
     let psi = new System.Diagnostics.ProcessStartInfo("CMD.exe", "/C " + s)
@@ -128,12 +136,16 @@ type FakeTTYBuilder() =
         execString m |> ignore
         f()
     member this.Zero() = TTYComp<string>.Zero
-    member this.Return(a) = TTYComp<string>.Return a
+    member this.Return(a) = 
+    	TTYComp.Return a
     member this.ReturnFrom(m:TTYComp<'a>) = m
     member this.Delay(f) = f
     member this.Run(f) =
         match enableVTMode () with
-        | TTYSuccess -> f()
+        | TTYSuccess -> 
+        	let result = f()
+        	let disabled = disableVTMode () // needs to execute regardless of f() succeeding
+        	result <+> disabled
         | TTYFailure x -> TTYFailure x
 
 let shell = new FakeTTYBuilder()
