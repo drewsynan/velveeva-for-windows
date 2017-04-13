@@ -38,6 +38,23 @@ extern bool GetConsoleMode(void* hConsoleHandle, int* lpMode)
 extern bool SetConsoleMode(void* hConsoleHandle, int lpMode)
 
 #nowarn "9" // pointers are evil
+let setConsoleMode handleConst modeConst =
+    let INVALID_HANDLE_VALUE = nativeint -1
+    let handle = GetStdHandle(handleConst)
+    if handle <> INVALID_HANDLE_VALUE then
+        let mode = NativePtr.stackalloc<int> 1
+
+        if GetConsoleMode(handle, mode) then
+            let value = NativePtr.read mode
+            let value = value ||| modeConst
+            match SetConsoleMode(handle, value) with
+            | true -> TTYSuccess
+            | false -> TTYFailure "Could not set console mode"
+        else 
+            TTYFailure "Could not get console mode"
+     else
+        TTYFailure "Could not get console handle"
+
 let enableVTMode () =
     // Console Handles
     // https://msdn.microsoft.com/en-us/library/windows/desktop/ms683231(v=vs.85).aspx
@@ -50,25 +67,12 @@ let enableVTMode () =
 
     let STD_INPUT_HANDLE = -10
     let ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
-
-    let setMode handleConst modeConst =
-        let INVALID_HANDLE_VALUE = nativeint -1
-        let handle = GetStdHandle(handleConst)
-        if handle <> INVALID_HANDLE_VALUE then
-            let mode = NativePtr.stackalloc<int> 1
-            if GetConsoleMode(handle, mode) then
-                let value = NativePtr.read mode
-                let value = value ||| modeConst
-                SetConsoleMode(handle, value) |> ignore
-                TTYSuccess
-            else 
-                TTYFailure "Could not get console mode"
-         else
-            TTYFailure "Could not get console handle"
     
-    let outputEnabled = setMode STD_OUTPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_PROCESSING
-    let inputEnabled = setMode STD_INPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_INPUT
+    let outputEnabled = setConsoleMode STD_OUTPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    let inputEnabled = setConsoleMode STD_INPUT_HANDLE ENABLE_VIRTUAL_TERMINAL_INPUT
     outputEnabled <+> inputEnabled
+
+// TODO: write disableVTMode ()
 
 let execString s =
     let psi = new System.Diagnostics.ProcessStartInfo("CMD.exe", "/C " + s)
