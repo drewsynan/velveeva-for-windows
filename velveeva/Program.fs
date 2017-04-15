@@ -41,9 +41,9 @@ extern bool SetConsoleMode(void* hConsoleHandle, int lpMode)
 
 #nowarn "9" // pointers are evil
 let setConsoleMode handleConst modeConst flag =
-    let inline op = match flag with
-             | ON -> (|||)
-             | OFF -> (^^^)
+    let op = match flag with
+             | ON -> (fun (x:int) (y:int) -> x ||| y)
+             | OFF -> (fun (x:int) (y:int) -> x ^^^ y)
 
     let INVALID_HANDLE_VALUE = nativeint -1
     let handle = GetStdHandle(handleConst)
@@ -52,8 +52,8 @@ let setConsoleMode handleConst modeConst flag =
 
         if GetConsoleMode(handle, mode) then
             let value = NativePtr.read mode
-            let value = value |> op |< modeConst
-            match SetConsoleMode(handle, value) with
+            let newValue = op value modeConst
+            match SetConsoleMode(handle, newValue) with
             | true -> TTYSuccess
             | false -> TTYFailure "Could not set console mode"
         else 
@@ -81,6 +81,40 @@ let setVTMode flag =
 let enableVTMode () = setVTMode ON
 let disableVTMode () = setVTMode OFF
 
+let multibyte (stream:System.IO.Stream) =
+    let mutable buff = Array.create<byte> 4 0uy
+
+    // utf-8 multibyte sequence lengths, from first byte
+    // from https://en.wikipedia.org/wiki/UTF-8#Description
+    // this will correctly parse the utf-8 characters and marshall into .NET's
+    // utf-16 char represenataion. Windows console doesn't play nice with utf at all though
+    // so maybe some day all the emoji will come through, just not today.
+
+    let ONE_BYTE     = byte 0b00000000
+    let TWO_BYTES    = byte 0b11000000
+    let THREE_BYTES  = byte 0b11100000
+    let FOUR_BYTES   = byte 0b11110000
+    let MAX          = byte 0b11110111
+
+    async {
+        let! _ = stream.ReadAsync(buff, 0, 1) |> Async.AwaitTask
+        let firstByte = Array.get buff 0
+        
+        let getAdditional first =
+            if first > MAX then 0 // invalid utf-8 byte
+            elif first >= FOUR_BYTES then 3
+            elif first >= THREE_BYTES then 2
+            elif first >= TWO_BYTES then 1
+            else 0
+        
+        let additionalBytes = getAdditional firstByte
+        let! rest = stream.ReadAsync(buff, 0, additionalBytes) |> Async.AwaitTask
+        let utfChar = Array.concat [ [| firstByte |]; [| for i in 0..(additionalBytes - 1) do yield byte (Array.get buff i) |] ]
+
+        //if Array.length utfChar > 1 then printfn "%A" utfChar
+
+        return System.Text.Encoding.UTF8.GetString(utfChar)
+    }
 
 let execString s =
     let psi = new System.Diagnostics.ProcessStartInfo("CMD.exe", "/C " + s)
@@ -95,10 +129,18 @@ let execString s =
 
     let rec printStream (stream:System.IO.StreamReader) =
         async {
-            let mutable c = Array.create 1 (char "\n")
+            
+            (*
+            let mutable c = Array.create 4 (char "\n")
             let! result = stream.ReadAsync(c, 0, 1) |> Async.AwaitTask
             System.Console.Write(Array.get c 0)
-            if not stream.EndOfStream then return! printStream stream
+            if not stream.EndOfStream then return! printStream 
+            *)
+            
+            
+            let! c = multibyte stream.BaseStream
+            System.Console.Write(c)
+            if stream.BaseStream.CanRead then return! printStream stream
         }
     
     let rec putChars (stream:System.IO.StreamWriter) =
@@ -137,15 +179,19 @@ type FakeTTYBuilder() =
         f()
     member this.Zero() = TTYComp<string>.Zero
     member this.Return(a) = 
-    	TTYComp.Return a
+        TTYComp<string>.Return a
     member this.ReturnFrom(m:TTYComp<'a>) = m
     member this.Delay(f) = f
     member this.Run(f) =
         match enableVTMode () with
         | TTYSuccess -> 
-        	let result = f()
-        	let disabled = disableVTMode () // needs to execute regardless of f() succeeding
-        	result <+> disabled
+            System.Console.OutputEncoding <- System.Text.Encoding.Unicode
+            let result = f ()
+            
+            let disabled = disableVTMode () // needs to execute regardless of f() succeeding
+            System.Console.OutputEncoding <- System.Text.Encoding.Default
+
+            result <+> disabled
         | TTYFailure x -> TTYFailure x
 
 let shell = new FakeTTYBuilder()
@@ -173,7 +219,6 @@ let execVeevaCommand cmdlist =
 [<EntryPoint>]
 let main argv =
     let argsList = List.ofSeq argv
-
     let result = match argsList with
         | [] ->
             execVeevaCommand ["help"]
