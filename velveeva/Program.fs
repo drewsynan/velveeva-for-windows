@@ -61,17 +61,15 @@ let setConsoleMode handleConst modeConst flag =
              | ON -> (fun (x:int) (y:int) -> x ||| y)
              | OFF -> (fun (x:int) (y:int) -> x ^^^ y)
     
-    let getHandle () = 
-        let h = GetStdHandle(handleConst)
-        let INVALID = nativeint -1
-        match h with
-        | INVALID -> Left "Could not get console handle"
-        | valid -> Right valid
+    let getHandle () =
+        match GetStdHandle(handleConst) with
+        | (nativeint -1) -> Left "Could not get console handle"
+        | handle -> Right handle
 
-    let getMode handleAddr =
+    let getMode handle =
         let ptr = NativePtr.stackalloc<int> 1
 
-        match GetConsoleMode(h, ptr) with
+        match GetConsoleMode(handle, ptr) with
         | true -> Right (NativePtr.read ptr)
         | false -> Left "Could not get console mode"
 
