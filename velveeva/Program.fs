@@ -40,7 +40,7 @@ let inline (<*>) (f_wrap:Either<'a,('T1 -> 'T2)>) (x_wrap:Either<'a,'T1>) =
                      | Left e -> Left e
         | Left e -> Left e
 
-let inline (<!>) f (v:Either<'a,'b>) =
+let inline (<S>) f (v:Either<'a,'b>) =
     Either<'a,'b>._pure f <*> v
 
 open System.Runtime.InteropServices
@@ -81,8 +81,8 @@ let setConsoleMode handleConst modeConst flag =
         | false -> Left "Could not set console mode" 
 
     let handle = getHandle ()
-    let newMode = (op modeConst) <!> (getMode <!> handle)
-    let success = setMode <!> handle <*> newMode
+    let newMode = (op modeConst) <S> (getMode <S> handle)
+    let success = setMode <S> handle <*> newMode
 
     match success with
     | Right _ -> TTYSuccess
