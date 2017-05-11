@@ -21,11 +21,27 @@ type TTYComp<'a> =
             | TTYFailure(a) -> f a
             | TTYSuccess -> TTYSuccess
         static member Return(x) = TTYSuccess
-        static member Pure(x) = TTYSuccess
         member m.Apply f =
             match m with
             | TTYFailure(a) -> TTYFailure (f a)
             | TTYSuccess -> TTYSuccess
+
+type Either<'a,'b> =
+    | Left of 'a
+    | Right of 'b
+    with
+    static member _pure (x:'c) =
+        Either<'a,'c>.Right x
+
+let inline (<*>) (f_wrap:Either<'a,('T1 -> 'T2)>) (x_wrap:Either<'a,'T1>) =
+        match f_wrap with
+        | Right f -> match x_wrap with
+                     | Right x -> Right (f x)
+                     | Left e -> Left e
+        | Left e -> Left e
+
+let inline (<!>) f (v:Either<'a,'b>) =
+    Either<'a,'b>._pure f <*> v
 
 open System.Runtime.InteropServices
 open Microsoft.FSharp.NativeInterop
@@ -44,22 +60,33 @@ let setConsoleMode handleConst modeConst flag =
     let op = match flag with
              | ON -> (fun (x:int) (y:int) -> x ||| y)
              | OFF -> (fun (x:int) (y:int) -> x ^^^ y)
+    
+    let getHandle () = 
+        let h = GetStdHandle(handleConst)
+        let INVALID = nativeint -1
+        match h with
+        | INVALID -> Left "Could not get console handle"
+        | valid -> Right valid
 
-    let INVALID_HANDLE_VALUE = nativeint -1
-    let handle = GetStdHandle(handleConst)
-    if handle <> INVALID_HANDLE_VALUE then
-        let mode = NativePtr.stackalloc<int> 1
+    let getMode handleAddr =
+        let ptr = NativePtr.stackalloc<int> 1
 
-        if GetConsoleMode(handle, mode) then
-            let value = NativePtr.read mode
-            let newValue = op value modeConst
-            match SetConsoleMode(handle, newValue) with
-            | true -> TTYSuccess
-            | false -> TTYFailure "Could not set console mode"
-        else 
-            TTYFailure "Could not get console mode"
-     else
-        TTYFailure "Could not get console handle"
+        match GetConsoleMode(h, ptr) with
+        | true -> Right (NativePtr.read ptr)
+        | false -> Left "Could not get console mode"
+
+    let setMode handle mode =
+        match SetConsoleMode(handle, mode) with
+        | true -> Right ()
+        | false -> Left "Could not set console mode" 
+
+    let handle = getHandle ()
+    let newMode = (op modeConst) <!> (getMode <!> handle)
+    let success = setMode <!> handle <*> newMode
+
+    match success with
+    | Right _ -> TTYSuccess
+    | Left e -> TTYFailure e
 
 let setVTMode flag =
     // Console Handles
