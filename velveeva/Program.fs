@@ -61,8 +61,8 @@ let setConsoleMode handleConst modeConst flag =
              | ON -> (fun (x:int) (y:int) -> x ||| y)
              | OFF -> (fun (x:int) (y:int) -> x ^^^ y)
     
-    let getHandle () =
-        match GetStdHandle(handleConst) with
+    let getHandle const =
+        match GetStdHandle(const) with
         | (nativeint -1) -> Left "Could not get console handle"
         | handle -> Right handle
 
@@ -78,7 +78,7 @@ let setConsoleMode handleConst modeConst flag =
         | true -> Right ()
         | false -> Left "Could not set console mode" 
 
-    let handle = getHandle ()
+    let handle = getHandle handleConst
     let newMode = (op modeConst) <!> (getMode <!> handle)
     let success = setMode <!> handle <*> newMode
 
